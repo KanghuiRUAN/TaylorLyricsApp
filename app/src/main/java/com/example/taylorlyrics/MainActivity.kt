@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.taylorlyrics.data.*
+import com.example.taylorlyrics.ui.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +49,8 @@ private sealed class Screen {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LyricsApp() {
-    val repository = remember { LyricsRepository.get(LocalAppContext()) }
+    val context = LocalAppContext.current
+    val repository = remember(context) { LyricsRepository.get(context) }
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Home)) }
 
