@@ -2,9 +2,9 @@ pluginManagement {
     repositories {
         google {
             content {
-                includeGroupByRegex(\"com\\.android.*\")
-                includeGroupByRegex(\"com\\.google.*\")
-                includeGroupByRegex(\"androidx.*\")
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
             }
         }
         mavenCentral()
@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = \"TaylorLyrics\"
-include(\":app\")
+rootProject.name = "TaylorLyrics"
+include(":app")
