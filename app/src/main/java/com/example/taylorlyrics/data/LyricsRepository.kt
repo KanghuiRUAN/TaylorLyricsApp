@@ -173,9 +173,10 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
         val to = from + bi.lens[row]
         val out = ArrayList<IntRange>(4)
         var pos = from
+        // String.indexOf 没有 (String, Int, Int) 重载，这里查找后再判断是否越出本歌边界
         while (pos <= to - q.length) {
-            val f = bi.norm.indexOf(q, pos, to)
-            if (f < 0) break
+            val f = bi.norm.indexOf(q, pos)
+            if (f < 0 || f + q.length > to) break
             out.add(bi.map[f]..bi.map[f + q.length - 1])
             pos = f + q.length
             if (out.size >= cap) break
