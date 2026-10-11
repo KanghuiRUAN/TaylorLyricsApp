@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +35,7 @@ import com.example.taylorlyrics.data.*
 private val Teal = Color(0xFF1DB0A6)
 private val Ink = Color(0xFF202124)
 private val Soft = Color(0x993C4043)
+private val Bg = Color(0xFFF7F8FA)
 
 /** 主页：搜索 + 专辑列表 */
 @Composable
@@ -45,15 +47,17 @@ fun HomeScreen(
     var query by remember { mutableStateOf("") }
     val results = remember(query) { if (query.isBlank()) emptyList() else repository.search(query) }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFFF7F8FA))) {
-        // header
-        Column(Modifier.fillMaxWidth().background(Teal).padding(horizontal = 20.dp, vertical = 18.dp)) {
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        // header：statusBarsPadding 避免被系统状态栏遮挡
+        Column(
+            Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 18.dp)
+        ) {
             Text("Taylor Swift 歌词库", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text("${repository.trackCount} 首歌曲 · ${repository.albumCount} 张专辑 · 离线全量",
                 color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
         }
-        // search bar
         Row(Modifier.fillMaxWidth().padding(16.dp)
             .clip(RoundedCornerShape(28.dp))
             .background(Color.White)
@@ -82,24 +86,29 @@ fun HomeScreen(
         }
 
         if (query.isNotBlank()) {
-            // search results
             if (results.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text("未找到匹配的歌曲", color = Soft, fontSize = 15.sp)
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    contentPadding = WindowInsets.navigationBars.asPaddingValues()
+                ) {
                     item {
                         Text("搜索结果 (${results.size})", Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
                             color = Soft, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
+                    // 故意不传 key：整体重建，且规避重复曲目导致的 duplicate-key 崩溃
                     items(results) { t -> TrackRow(t, onClick = { onOpenTrack(t) }) }
                 }
             }
         } else {
-            // album list
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(repository.allAlbums(), key = { it.name }) { album ->
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = WindowInsets.navigationBars.asPaddingValues()
+            ) {
+                items(repository.allAlbums()) { album ->
                     AlbumRow(album, onClick = { onOpenAlbum(album.name) })
                 }
             }
@@ -160,18 +169,24 @@ fun AlbumScreen(
     onOpenTrack: (Track) -> Unit,
 ) {
     val tracks = remember(albumName) { repository.albumTracks(albumName) }
-    Column(Modifier.fillMaxSize().background(Color(0xFFF7F8FA))) {
-        Row(Modifier.fillMaxWidth().background(Teal).padding(horizontal = 8.dp, vertical = 12.dp),
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        Row(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
+            .padding(horizontal = 8.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(albumName, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold,
                     maxLines = 2)
                 Text("${tracks.size} 首歌曲", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
             }
         }
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(tracks, key = { "${it.disc}-${it.trackNum}-${it.track}" }) { t ->
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = WindowInsets.navigationBars.asPaddingValues()
+        ) {
+            // 闪退修复：数据中同一专辑存在重复的 disc+trackNum+track（豪华版/EP 重复收录），
+            // 原来用它当 LazyColumn key → "Key was already used" 崩溃。改用行下标做 key。
+            itemsIndexed(tracks, key = { index, _ -> index }) { _, t ->
                 TrackRow(t, onClick = { onOpenTrack(t) })
                 HorizontalDivider(color = Color(0x14000000))
             }
@@ -189,8 +204,8 @@ fun LyricsScreen(track: Track, onBack: () -> Unit) {
     val hasSynced = track.hasSyncedLyrics && syncedLines.isNotEmpty()
 
     Column(Modifier.fillMaxSize().background(Color(0xFFFBFBF6))) {
-        // top bar
-        Row(Modifier.fillMaxWidth().background(Teal).padding(horizontal = 8.dp, vertical = 12.dp),
+        Row(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
+            .padding(horizontal = 8.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
             Column(Modifier.weight(1f)) {
@@ -199,7 +214,6 @@ fun LyricsScreen(track: Track, onBack: () -> Unit) {
                     color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
             }
             if (hasSynced) {
-                // toggle plain / synced
                 Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.22f))
                     .padding(3.dp)) {
                     FilterChip(selected = !showSynced, onClick = { showSynced = false },
@@ -213,7 +227,6 @@ fun LyricsScreen(track: Track, onBack: () -> Unit) {
             }
         }
 
-        // inline search bar (lyrics keyword highlight)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             .clip(RoundedCornerShape(22.dp)).background(Color.White)
             .padding(horizontal = 12.dp),
@@ -249,8 +262,11 @@ fun LyricsScreen(track: Track, onBack: () -> Unit) {
                 Text("此曲目暂无歌词（可能为伴奏 / 卡拉OK版）", color = Soft, fontSize = 14.sp)
             }
         } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = 22.dp, vertical = 12.dp)) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 12.dp)
+            ) {
                 Text(
                     highlight(body, searchTerm),
                     color = Ink,
@@ -264,33 +280,46 @@ fun LyricsScreen(track: Track, onBack: () -> Unit) {
     }
 }
 
-/** 把关键词高亮为金色 */
+/**
+ * 关键词高亮为金色（忽略大小写与标点）。
+ * 线性算法：先把正文归一化并记录每个归一化字符对应的原始下标，
+ * 再用 indexOf 找匹配段，映射回原文。避免原来 O(n·61) 的逐位子串归一化，
+ * 同时彻底消除"查询词归一化后为空 → 死循环卡死"的问题。
+ */
 private fun highlight(text: String, term: String): androidx.compose.ui.text.AnnotatedString {
-    val t = term.trim()
-    if (t.isEmpty()) return androidx.compose.ui.text.AnnotatedString(text)
-    val q = normalize(t)
-    val sb = buildAnnotatedString {
-        var i = 0
-        while (i < text.length) {
-            // find a token in text whose normalized form matches
-            var found = false
-            for (end in i until text.length + 1) {
-                if (end - i > 60) break
-                val seg = text.substring(i, end)
-                if (normalize(seg) == q) {
-                    withStyle(SpanStyle(color = Color(0xFFB87333), fontWeight = FontWeight.Bold)) {
-                        append(seg)
-                    }
-                    i = end
-                    found = true
-                    break
-                }
-            }
-            if (!found) {
-                append(text[i])
-                i++
-            }
+    val q = normalize(term.trim())
+    if (q.isEmpty()) return androidx.compose.ui.text.AnnotatedString(text)
+
+    val norm = StringBuilder(text.length)
+    val originIdx = ArrayList<Int>(text.length)
+    for (i in text.indices) {
+        val c = text[i]
+        if (c.isLetterOrDigit()) {
+            norm.append(c.lowercaseChar())
+            originIdx.add(i)
         }
     }
-    return sb
+    val n = norm.toString()
+    if (n.isEmpty()) return androidx.compose.ui.text.AnnotatedString(text)
+
+    var pos = 0
+    var foundAny = false
+    val out = buildAnnotatedString {
+        var cursor = 0
+        while (pos <= n.length - q.length) {
+            val f = n.indexOf(q, pos)
+            if (f < 0) break
+            foundAny = true
+            val start = originIdx[f]
+            val end = originIdx[f + q.length - 1] + 1
+            if (start > cursor) append(text.substring(cursor, start))
+            withStyle(SpanStyle(color = Color(0xFFB87333), fontWeight = FontWeight.Bold)) {
+                append(text.substring(start, end))
+            }
+            cursor = end
+            pos = f + q.length
+        }
+        if (cursor < text.length) append(text.substring(cursor))
+    }
+    return if (foundAny) out else androidx.compose.ui.text.AnnotatedString(text)
 }

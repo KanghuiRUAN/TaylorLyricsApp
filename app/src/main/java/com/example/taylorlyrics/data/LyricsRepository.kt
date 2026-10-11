@@ -35,6 +35,13 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
         allTracks.filter { it.album == albumName }
             .sortedBy { it.disc * 1000 + it.trackNum }
 
+    /** 预先归一化歌名与歌词全文，避免每次按键都重算 7.6MB 文本（否则卡顿甚至 ANR） */
+    private class Row(val track: Track, val nTitle: String, val nBody: String)
+
+    private val rows: List<Row> by lazy {
+        allTracks.map { Row(it, normalize(it.track), normalize(it.plainLyrics)) }
+    }
+
     /**
      * 搜索：优先按歌名匹配，其次按歌词全文匹配。
      * query 大小写不敏感、忽略常见干扰字符。
@@ -44,14 +51,9 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
         if (q.isEmpty()) return emptyList()
         val titleHits = ArrayList<Track>()
         val bodyHits = ArrayList<Track>()
-        for (t in allTracks) {
-            if (normalize(t.track).contains(q)) {
-                titleHits.add(t)
-            } else if (normalize(t.plainLyrics).contains(q)) {
-                bodyHits.add(t)
-            } else if (t.hasSyncedLyrics && normalize(t.syncedLyrics).contains(q)) {
-                bodyHits.add(t)
-            }
+        for (r in rows) {
+            if (r.nTitle.contains(q)) titleHits.add(r.track)
+            else if (r.nBody.contains(q)) bodyHits.add(r.track)
         }
         return titleHits + bodyHits
     }
