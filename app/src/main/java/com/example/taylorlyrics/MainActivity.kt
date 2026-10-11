@@ -1,39 +1,31 @@
 package com.example.taylorlyrics
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.taylorlyrics.data.*
-import com.example.taylorlyrics.ui.*
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.example.taylorlyrics.data.LyricsRepository
+import com.example.taylorlyrics.data.Track
+import com.example.taylorlyrics.ui.AlbumScreen
+import com.example.taylorlyrics.ui.HomeScreen
+import com.example.taylorlyrics.ui.LyricsScreen
+import com.example.taylorlyrics.ui.WordNetScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            CompositionLocalProvider(LocalAppContext provides applicationContext) {
-                MaterialTheme(colorScheme = lightColorScheme()) {
-                    LyricsApp()
-                }
+            MaterialTheme(colorScheme = lightColorScheme()) {
+                LyricsApp()
             }
         }
     }
@@ -43,14 +35,16 @@ class MainActivity : ComponentActivity() {
 private sealed class Screen {
     object Home : Screen()
     data class Album(val name: String) : Screen()
-    data class Lyrics(val track: Track) : Screen()
+    data class Lyrics(val track: Track, val keyword: String) : Screen()
+    data class WordNet(val centerWord: String?) : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LyricsApp() {
-    val context = LocalAppContext.current
-    val repository = remember(context) { LyricsRepository.get(context) }
+    val context: Context = LocalContext.current
+    val repository = remember(context) { LyricsRepository.get(context).also { it.warmUp() } }
+
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Home)) }
 
@@ -58,6 +52,7 @@ fun LyricsApp() {
         backStack = backStack + s
         currentScreen = s
     }
+
     fun back() {
         if (backStack.size > 1) {
             backStack = backStack.dropLast(1)
@@ -66,13 +61,34 @@ fun LyricsApp() {
     }
 
     when (val s = currentScreen) {
-        is Screen.Home -> HomeScreen(repository, onOpenAlbum = { navigate(Screen.Album(it)) }, onOpenTrack = { navigate(Screen.Lyrics(it)) })
-        is Screen.Album -> AlbumScreen(repository, s.name, onBack = ::back, onOpenTrack = { navigate(Screen.Lyrics(it)) })
-        is Screen.Lyrics -> LyricsScreen(s.track, onBack = ::back)
-    }
-}
+        is Screen.Home -> HomeScreen(
+            repository = repository,
+            onOpenAlbum = { navigate(Screen.Album(it)) },
+            onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
+            onOpenWordNet = { w -> navigate(Screen.WordNet(w)) },
+        )
 
-// ---------------- Local helpers ----------------
-val LocalAppContext = staticCompositionLocalOf<android.content.Context> {
-    error("No context provided")
+        is Screen.Album -> AlbumScreen(
+            repository = repository,
+            albumName = s.name,
+            onBack = { back() },
+            onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
+        )
+
+        is Screen.Lyrics -> LyricsScreen(
+            repository = repository,
+            track = s.track,
+            initialTerm = s.keyword,
+            onBack = { back() },
+            onOpenWord = { w -> navigate(Screen.WordNet(w)) },
+        )
+
+        is Screen.WordNet -> WordNetScreen(
+            repository = repository,
+            centerWord = s.centerWord,
+            onBack = { back() },
+            onPickWord = { w -> navigate(Screen.WordNet(w)) },
+            onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
+        )
+    }
 }

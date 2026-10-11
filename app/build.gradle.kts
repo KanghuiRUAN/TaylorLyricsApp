@@ -12,14 +12,30 @@ android {
         applicationId = "com.example.taylorlyrics"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         vectorDrawables { useSupportLibrary = true }
     }
 
+    // 固定签名：debug / release 共用同一把 keystore，
+    // 这样每次 CI 构建出来的 APK 签名一致，覆盖安装不再报"签名不符合"。
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("keystore/taylorlyrics.p12")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixed")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
