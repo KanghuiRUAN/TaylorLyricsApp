@@ -12,9 +12,7 @@ data class AlbumInfo(
     val tracks: List<Track>,
 )
 
-/**
- * 一条搜索命中：曲目 + 是否歌名命中 + 歌词内命中区间（track.plainLyrics 坐标系）+ 摘要片段
- */
+/** 一条搜索命中：曲目 + 是否歌名命中 + 歌词内命中区间（track.plainLyrics 坐标系）+ 摘要片段 */
 class Hit(
     val track: Track,
     val inTitle: Boolean,
@@ -22,14 +20,10 @@ class Hit(
     val snip: Snippet?,
 )
 
-/** 词网络节点：词 / 出现在多少首歌 / 全库总出现次数 */
-class WordNode(val word: String, val songs: Int, val total: Int)
-
 /**
  * 歌词资料库：从 assets 读取内置 JSON 并常驻内存，提供
  *  · 专辑浏览
  *  · 搜索（歌名优先 + 歌词命中位置 + 摘要）
- *  · 词网络（词频、跨专辑共现、按词下钻歌曲）
  *
  * 性能要点：7.6MB 语料只在后台线程构建一次索引；索引用"一整条归一化字符串 +
  * IntArray 偏移表"表示，避免在千万级字符上做 String 拷贝与 Integer 装箱。
@@ -104,10 +98,10 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
                 AlbumInfo(
                     name,
                     list.firstOrNull()?.albumRelease.orEmpty(),
-                    list.sortedBy { it.disc * 1000 + it.trackNum },
+                    list.sortedByDescending { it.streams },
                 )
             }
-            .sortedBy { it.release }
+            .sortedByDescending { it.tracks.maxOfOrNull(Track::streams) ?: 0L }
     }
 
     fun allAlbums(): List<AlbumInfo> = albumList
@@ -115,7 +109,7 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
 
     fun albumTracks(albumName: String): List<Track> =
         allTracks.filter { it.album == albumName }
-            .sortedBy { it.disc * 1000 + it.trackNum }
+            .sortedByDescending { it.streams }
 
     // ---------------- 搜索 ----------------
 
@@ -155,7 +149,10 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
             val t = allTracks[row]
             bodyHits.add(Hit(t, false, rg, snippetOf(t.plainLyrics, rg)))
         }
-        return titleHits + bodyHits
+        val merged = titleHits + bodyHits
+        return if (merged.size > 1)
+            merged.sortedByDescending { it.track.streams }
+        else merged
     }
 
     private fun rowOf(bi: BodyIndex, g: Int): Int {
@@ -193,16 +190,17 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
     /** 随机惊喜：随便来一首 */
     fun randomTrack(): Track = allTracks[Random.nextInt(allTracks.size)]
 
-    /** 随机抽取 n 首不同的歌（猜歌词出题用） */
-    fun sampleTracks(n: Int): List<Track> = allTracks.shuffled().take(n)
+    /** 随机抽取 n 首不同的歌（猜歌词出题用；优先取热度较高的歌） */
+    fun sampleTracks(n: Int): List<Track> =
+        allTracks.shuffled().sortedByDescending { it.streams }.take(n)
 
-    /** 收藏 key -> 曲目（Favorites 存的是字符串 key，返回时反查实体） */
+    /** 收藏 key -> 曲目（Favorites 存的是字符串 key，返回时反查实体；按热度降序） */
     fun tracksByKeys(keys: List<String>): List<Track> =
         keys.mapNotNull { k ->
             val p = k.split('\u0001')
             if (p.size == 4) findTrack(p[0], p[2].toIntOrNull() ?: -1, p[1].toIntOrNull() ?: -1)
             else null
-        }
+        }.sortedByDescending { it.streams }
 
     /**
      * 短语级搜索：在歌词正文里按词序逐词连续匹配输入短语（标点和空格不影响），
@@ -220,7 +218,7 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
             if (rg.isEmpty()) continue
             out.add(Hit(t, normalize(t.track).contains(nq), rg.take(120), snippetOf(t.plainLyrics, rg)))
         }
-        return out
+        return out.sortedByDescending { it.track.streams }
     }
 
 
@@ -233,127 +231,15 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
         return target
     }
 
-    // ---------------- 词网络 ----------------
-
-    private class WordIndex(
-        val perSong: List<HashSet<String>>,
-        val docFreq: HashMap<String, Int>,
-        val totalFreq: HashMap<String, Int>,
-    )
-
-    private val wordIndex: WordIndex by lazy {
-        val perSong = ArrayList<HashSet<String>>(allTracks.size)
-        val docs = HashMap<String, Int>(16384)
-        val tot = HashMap<String, Int>(16384)
-        val vocab = HashMap<String, String>(16384)   // 复用同一个 String 实例，省内存
-        val sb = StringBuilder(24)
-        for (t in allTracks) {
-            val body = t.plainLyrics
-            val cnt = HashMap<String, Int>(256)
-            var i = 0
-            while (i <= body.length) {
-                val c = if (i < body.length) body[i] else ' '
-                if (c.isLetter()) sb.append(c.lowercaseChar()) else {
-                    if (sb.length >= 4) {
-                        var w = sb.toString()
-                        vocab[w]?.let { w = it } ?: vocab.put(w, w)
-                        cnt[w] = (cnt[w] ?: 0) + 1
-                    }
-                    sb.setLength(0)
-                }
-                i++
-            }
-            val set = HashSet<String>(cnt.size)
-            set.addAll(cnt.keys)
-            perSong.add(set)
-            for (w in set) docs[w] = (docs[w] ?: 0) + 1
-            for ((w, n) in cnt) tot[w] = (tot[w] ?: 0) + n
-        }
-        WordIndex(perSong, docs, tot)
-    }
-
-    /** 全库最常出现的词（词网络入口的枢纽节点） */
-    fun topWords(limit: Int = 40): List<WordNode> {
-        val idx = wordIndex
-        return idx.docFreq.entries.sortedWith(
-            compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }
-        ).take(limit).map { WordNode(it.key, it.value, idx.totalFreq[it.key] ?: it.value) }
-    }
-
-    /** 某首歌自身的高频词 */
-    fun topWordsIn(track: Track, limit: Int = 18): List<WordNode> {
-        val idx = wordIndex
-        val body = track.plainLyrics
-        val cnt = HashMap<String, Int>(128)
-        val sb = StringBuilder(24)
-        var i = 0
-        while (i <= body.length) {
-            val c = if (i < body.length) body[i] else ' '
-            if (c.isLetter()) sb.append(c.lowercaseChar()) else {
-                if (sb.length >= 4) {
-                    val w = sb.toString()
-                    cnt[w] = (cnt[w] ?: 0) + 1
-                }
-                sb.setLength(0)
-            }
-            i++
-        }
-        return cnt.entries.sortedWith(
-            compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }
-        ).take(limit).map { WordNode(it.key, idx.docFreq[it.key] ?: 0, it.value) }
-    }
-
-    /** 与某个词最常"同处一首歌"的词 —— 词网络的边 */
-    fun relatedWords(word: String, limit: Int = 40): List<WordNode> {
-        val w = normalize(word.trim())
-        if (w.isEmpty()) return emptyList()
-        val idx = wordIndex
-        val key = idx.docFreq.keys.firstOrNull { it == w } ?: w
-        val score = HashMap<String, Int>(1024)
-        for (other in idx.perSong) {
-            if (other.isEmpty() || !other.contains(key)) continue
-            for (o in other) if (o != key) score[o] = (score[o] ?: 0) + 1
-        }
-        return score.entries.sortedWith(
-            compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }
-        ).take(limit).map { WordNode(it.key, idx.docFreq[it.key] ?: 0, idx.totalFreq[it.key] ?: 0) }
-    }
-
-    /** 歌词含某个词的歌曲（点击节点后下钻） */
-    fun songsContaining(word: String, limit: Int = 200): List<Hit> {
-        val q = normalize(word.trim())
-        if (q.isEmpty()) return emptyList()
-        val bi = bodyIndex
-        val out = ArrayList<Hit>(32)
-        var pos = 0
-        val done = HashSet<Int>(32)
-        while (pos <= bi.norm.length - q.length && out.size < limit) {
-            val f = bi.norm.indexOf(q, pos)
-            if (f < 0) break
-            pos = f + q.length
-            val row = rowOf(bi, f)
-            if (row < 0 || done.contains(row)) continue
-            if (f + q.length > bi.starts[row] + bi.lens[row]) continue
-            done.add(row)
-            val rg = rangesOfRow(bi, row, q, 40)
-            val t = allTracks[row]
-            out.add(Hit(t, false, rg, snippetOf(t.plainLyrics, rg)))
-        }
-        return out
-    }
-
-    /** 词表规模（调试/展示用） */
-    val vocabularySize: Int get() = wordIndex.docFreq.size
-
     // ---------------- 生命周期 ----------------
 
     private val warmExecutor = Executors.newSingleThreadExecutor()
 
-    /** 启动后在后台线程预热索引，避免用户第一次搜索/打开词网络时卡顿 */
+    /** 启动后在后台线程预热索引，避免用户第一次搜索时卡顿 */
     fun warmUp() {
         warmExecutor.execute {
             try {
-                rows; bodyIndex; wordIndex
+                rows; bodyIndex
             } catch (_: Throwable) {
             }
         }
@@ -375,9 +261,29 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
                 .bufferedReader(Charsets.UTF_8).use { it.readText() }
             val root = JSONObject(jsonText)
             val arr = root.getJSONArray("tracks")
+
+            // 热度 & 场景标签：读取 assets 侧 hotness.json（kworb 播放量 + 自动分类标签）
+            val hot = HashMap<String, Pair<Long, List<String>>>()
+            try {
+                val ht = context.assets.open("hotness.json")
+                    .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val hotRoot = org.json.JSONArray(ht)
+                for (i in 0 until hotRoot.length()) {
+                    val o = hotRoot.getJSONObject(i)
+                    val key = o.optString("album") + "\u0000" + o.optString("track")
+                    val tags = ArrayList<String>()
+                    val ta = o.optJSONArray("tags")
+                    if (ta != null) for (j in 0 until ta.length()) tags.add(ta.optString(j))
+                    hot[key] = Pair(o.optLong("streams", 0L), tags)
+                }
+            } catch (_: Throwable) {
+            }
+
             val list = ArrayList<Track>(arr.length())
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
+                val key = o.optString("album") + "\u0000" + o.optString("track")
+                val h = hot[key]
                 list.add(
                     Track(
                         track = o.optString("track"),
@@ -389,6 +295,8 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
                         hasSyncedLyrics = o.optBoolean("hasSyncedLyrics"),
                         plainLyrics = o.optString("plainLyrics"),
                         syncedLyrics = o.optString("syncedLyrics"),
+                        streams = h?.first ?: 0L,
+                        tags = h?.second ?: emptyList(),
                     )
                 )
             }
