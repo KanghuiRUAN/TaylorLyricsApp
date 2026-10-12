@@ -251,6 +251,27 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
     fun sampleTracks(n: Int): List<Track> =
         visibleTracks.shuffled().sortedByDescending { it.streams }.take(n)
 
+    /** 构建一轮猜歌词题目：从随机池中取 count 首互不重复的歌（每次调用都重新随机） */
+    fun buildQuiz(count: Int, poolSize: Int = 40): List<Track> {
+        val pool = sampleTracks(maxOf(count, poolSize))
+        val seen = LinkedHashSet<String>()
+        val out = ArrayList<Track>(count)
+        for (t in pool) {
+            if (seen.add(t.track)) out.add(t)
+            if (out.size >= count) break
+        }
+        return out
+    }
+
+    /** 选项：正确答案 + n-1 个随机干扰曲名（名称去重，保证选项互不相同） */
+    fun quizOptions(answer: Track, n: Int = 4): List<String> =
+        (listOf(answer.track) + sampleTracks(60)
+            .map { it.track }
+            .distinct()
+            .filter { it != answer.track }
+            .take(n - 1))
+            .shuffled()
+
     /** 收藏 key -> 曲目（Favorites 存的是字符串 key，返回时反查实体；按热度降序） */
     fun tracksByKeys(keys: List<String>): List<Track> =
         keys.mapNotNull { k ->
