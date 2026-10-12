@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 private sealed class Screen {
     object Home : Screen()
     object Favorites : Screen()
-    object Guess : Screen()
+    data class Guess(val session: Int) : Screen()
     data class Album(val name: String) : Screen()
     data class Lyrics(val track: Track, val keyword: String) : Screen()
 }
@@ -52,6 +52,7 @@ fun LyricsApp() {
 
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Home)) }
+    var guessSession by remember { mutableStateOf(0) }
 
     fun navigate(s: Screen) {
         backStack = backStack + s
@@ -74,7 +75,7 @@ fun LyricsApp() {
             onOpenAlbum = { navigate(Screen.Album(it)) },
             onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
             onOpenFavorites = { navigate(Screen.Favorites) },
-            onOpenGuess = { navigate(Screen.Guess) },
+            onOpenGuess = { guessSession++; navigate(Screen.Guess(guessSession)) },
             onSurprise = { navigate(Screen.Lyrics(repository.randomTrack(), "")) },
         )
 
@@ -86,6 +87,7 @@ fun LyricsApp() {
 
         is Screen.Guess -> GuessScreen(
             repository = repository,
+            session = s.session,
             onBack = { back() },
             onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
         )
