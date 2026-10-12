@@ -128,6 +128,7 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
 
         for ((i, r) in rows.withIndex()) {
             if (!r.nTitle.text.contains(q)) continue
+            if (i in hiddenIndices) continue   // v1.5: 隐藏重复版本
             seenTitle.add(i)
             val rg = rangesOfRow(bi, i, q, 120)
             titleHits.add(Hit(r.track, true, rg, snippetOf(r.track.plainLyrics, rg)))
@@ -143,6 +144,7 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
             if (row < 0) continue
             // 跨歌边界产生的伪命中
             if (f + q.length > bi.starts[row] + bi.lens[row]) continue
+            if (row in hiddenIndices) continue   // v1.5: 隐藏重复版本
             if (seenTitle.contains(row)) continue
             seenTitle.add(row)
             val rg = rangesOfRow(bi, row, q, 120)
@@ -187,12 +189,67 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
 
     // ---------------- v1.3 粉丝功能 ----------------
 
-    /** 随机惊喜：随便来一首 */
-    fun randomTrack(): Track = allTracks[Random.nextInt(allTracks.size)]
+    // ---------------- v1.5 多版本去重 ----------------
 
-    /** 随机抽取 n 首不同的歌（猜歌词出题用；优先取热度较高的歌） */
+    /** 是否 Taylor's Version 重录版（兼容 ASCII ' 与弯引号 ' 两种写法） */
+    private fun isTaylorsVersion(t: Track): Boolean {
+        val n = t.track
+        return (n.contains("Taylor's", true) || n.contains("Taylor\u2019s", true)) &&
+            n.contains("Version", true)
+    }
+
+    /** 去掉所有括号版本标记后的基础歌名（循环剥离，兼容嵌套括号如 (Piano Version (From ".."))） */
+    private fun baseNameOf(name: String): String {
+        var s = name
+        while (true) {
+            val o = s.indexOf('(')
+            val c = s.lastIndexOf(')')
+            if (o < 0 || c < o) break
+            s = s.removeRange(o, c + 1)
+            s = s.replace(Regex("\\s{2,}"), " ").trim()
+        }
+        return s.trim()
+    }
+
+    /**
+     * 需要从【搜索 / 随便来一首 / 猜歌词】中隐藏的曲目下标。
+     * 规则：同一首歌（基础名相同）且歌词完全一致时，视为重复版本，
+     * 只保留一个代表版本（优先 Taylor's Version，其次保留播放量最高者），其余全部隐藏。
+     */
+    private val hiddenIndices: Set<Int> by lazy {
+        val byKey = HashMap<Pair<String, String>, MutableList<Int>>()
+        for (i in allTracks.indices) {
+            val t = allTracks[i]
+            val key = baseNameOf(t.track) to t.plainLyrics
+            byKey.getOrPut(key) { ArrayList() }.add(i)
+        }
+        val hidden = HashSet<Int>()
+        for (entries in byKey.values) {
+            if (entries.size < 2) continue
+            val rep = entries.maxWith(
+                compareBy(
+                    // TV 判 1、非 TV 判 0：maxWith 取 key 最大者，故 Taylor's Version 优先；
+                    // 同为 TV（或同为非 TV）时再比较播放量，streams 高者优先
+                    { if (isTaylorsVersion(allTracks[it])) 1 else 0 },
+                    { allTracks[it].streams },
+                )
+            )
+            for (i in entries) if (i != rep) hidden.add(i)
+        }
+        hidden
+    }
+
+    /** 可见曲目（已去掉重复版本） */
+    private val visibleTracks: List<Track> by lazy {
+        allTracks.filterIndexed { i, _ -> i !in hiddenIndices }
+    }
+
+    /** 随机惊喜：随便来一首（仅在去重后的可见曲目里取） */
+    fun randomTrack(): Track = visibleTracks[Random.nextInt(visibleTracks.size)]
+
+    /** 随机抽取 n 首不同的歌（猜歌词出题用；优先取热度较高的歌，仅在去重后的可见曲目里取） */
     fun sampleTracks(n: Int): List<Track> =
-        allTracks.shuffled().sortedByDescending { it.streams }.take(n)
+        visibleTracks.shuffled().sortedByDescending { it.streams }.take(n)
 
     /** 收藏 key -> 曲目（Favorites 存的是字符串 key，返回时反查实体；按热度降序） */
     fun tracksByKeys(keys: List<String>): List<Track> =
@@ -212,8 +269,9 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
         val nq = normalize(q)
         // 逐歌独立查找：bodyIndex 是拼接大文本，直接在里面找短语会跨歌误命中
         val out = ArrayList<Hit>(16)
-        for (t in allTracks) {
+        for ((i, t) in allTracks.withIndex()) {
             if (out.size >= limit) break
+            if (i in hiddenIndices) continue   // v1.5: 隐藏重复版本
             val rg = normRanges(normOf(t.plainLyrics), nq)
             if (rg.isEmpty()) continue
             out.add(Hit(t, normalize(t.track).contains(nq), rg.take(120), snippetOf(t.plainLyrics, rg)))
