@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -799,23 +800,41 @@ fun FavoritesScreen(
     }
 }
 
-// ======================= 猜歌词小游戏 =======================
+// ======================= Guess Lyrics Game =======================
 
 @Composable
 fun GuessScreen(
     repository: LyricsRepository,
+    session: Int,
     onBack: () -> Unit,
     onOpenTrack: (Track, String) -> Unit,
 ) {
-    var gameId by remember { mutableStateOf(0) }
-    // 出题：随机抽 10 首有歌词的歌
-    val rounds = remember(gameId) {
-        repository.sampleTracks(40).filter { it.plainLyrics.isNotBlank() }.take(10)
+    val context = LocalContext.current
+
+    // session bumps on every tap of the Guess entry -> force a fresh random quiz
+    var gameId by remember(session) { mutableStateOf(0) }
+
+    // 10 random questions per entry / per replay (dedup rules live in Repository)
+    val rounds = remember(session, gameId) { repository.buildQuiz(10) }
+
+    var idx by remember(session, gameId) { mutableStateOf(0) }
+    var correct by remember(session, gameId) { mutableStateOf(0) }
+    var answered by remember(session, gameId) { mutableStateOf(false) }
+    var picked by remember(session, gameId) { mutableStateOf(-1) }
+
+    var rank by remember(session, gameId) { mutableStateOf(0) }
+    var bestBefore by remember(session, gameId) { mutableStateOf(0) }
+    val finished = rounds.isNotEmpty() && idx >= rounds.size
+
+    LaunchedEffect(session, gameId, finished) {
+        if (finished) {
+            bestBefore = GuessScores.best()?.correct ?: 0
+            rank = GuessScores.add(context, correct, rounds.size)
+        }
     }
-    var idx by remember(gameId) { mutableStateOf(0) }
-    var correct by remember(gameId) { mutableStateOf(0) }
-    var answered by remember(gameId) { mutableStateOf(false) }
-    var picked by remember(gameId) { mutableStateOf(-1) }
+
+    var showBoard by remember { mutableStateOf(false) }
+    var boardTick by remember { mutableStateOf(0) }
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
@@ -826,6 +845,9 @@ fun GuessScreen(
                 Text("猜歌词", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                 Text("这句词出自哪首歌？", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
             }
+            IconButton(onClick = { showBoard = true }) {
+                Icon(Icons.Filled.Style, "历史计分板", tint = Color.White)
+            }
         }
 
         when {
@@ -834,10 +856,9 @@ fun GuessScreen(
                     Text("曲库为空", color = Soft, fontSize = 14.sp)
                 }
             }
-            idx >= rounds.size -> {
-                // 结果页
+            finished -> {
                 Column(
-                    Modifier.fillMaxSize().padding(32.dp),
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
@@ -855,8 +876,34 @@ fun GuessScreen(
                         },
                         color = Soft, fontSize = 14.sp
                     )
+                    Spacer(Modifier.height(18.dp))
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Paper),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                BoardStat("本轮排名", if (rank > 0) "#$rank" else "—")
+                                BoardStat("总轮数", "${GuessScores.totalRounds()}")
+                                BoardStat("历史最佳", if (bestBefore > 0) "$bestBefore" else "—")
+                            }
+                            if (rank == 1) {
+                                Spacer(Modifier.height(10.dp))
+                                Text("👑 刷新了历史最佳成绩！", color = Gold, fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(20.dp))
                     Button(onClick = { gameId++ }) { Text("再玩一轮") }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { showBoard = true }) {
+                        Text("查看历史计分板", color = Teal, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
             else -> {
@@ -865,14 +912,7 @@ fun GuessScreen(
                     val ls = current.plainLyrics.trim().split('\n').map { it.trim() }.filter { it.isNotBlank() }
                     if (ls.isEmpty()) "" else if (ls.size > 2) ls[1] else ls.first()
                 }
-                val options = remember(current) {
-                    val wrongs = repository.sampleTracks(40)
-                        .map { it.track }
-                        .distinct()
-                        .filter { it != current.track }
-                        .take(3)
-                    (wrongs + current.track).shuffled()
-                }
+                val options = remember(current) { repository.quizOptions(current) }
 
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
                     Text("第 ${idx + 1} 题 / ${rounds.size} · 已答对 $correct",
@@ -945,4 +985,83 @@ fun GuessScreen(
             }
         }
     }
+
+    if (showBoard) {
+        GuessBoardDialog(
+            tick = boardTick,
+            onClear = { GuessScores.clear(context); boardTick++ },
+            onClose = { showBoard = false },
+        )
+    }
+}
+
+/** 计分板里的一个统计项 */
+@Composable
+private fun BoardStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = Teal, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = Soft, fontSize = 12.sp)
+    }
+}
+
+/** 历史计分板弹窗：最佳成绩 / 总轮数 / 平均 / 最近若干轮记录 + 清空 */
+@Composable
+private fun GuessBoardDialog(
+    tick: Int,
+    onClear: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val total = remember(tick) { GuessScores.totalRounds() }
+    val best = remember(tick) { GuessScores.best() }
+    val records = remember(tick) { GuessScores.history() }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("🏆 猜歌词历史计分板", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    BoardStat("最佳成绩", best?.let { "${it.correct} / ${it.total}" } ?: "—")
+                    BoardStat("总轮数", "$total")
+                    BoardStat("平均正确率", avgText(total, records))
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("最近成绩", color = Soft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                if (records.isEmpty()) {
+                    Text("还没有记录，先玩一轮吧～", color = Soft, fontSize = 13.sp)
+                }
+                records.take(10).forEachIndexed { i, r ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("${i + 1}", color = Soft, fontSize = 12.sp, modifier = Modifier.width(24.dp))
+                        Text("${r.correct} / ${r.total}", color = Ink, fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.width(64.dp))
+                        Text(GuessScores.format(r.time), color = Soft, fontSize = 12.sp,
+                            modifier = Modifier.weight(1f))
+                        Text("${if (r.total <= 0) 0 else r.correct * 100 / r.total}%",
+                            color = Teal, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("关闭") } },
+        dismissButton = {
+            if (records.isNotEmpty()) {
+                TextButton(onClick = onClear) { Text("清空记录", color = Color(0xFFC0392B)) }
+            }
+        },
+    )
+}
+
+/** 计分板平均正确率文案 */
+private fun avgText(total: Int, records: List<GuessRecord>): String {
+    if (records.isEmpty() || total <= 0) return "—"
+    var c = 0
+    var t = 0
+    records.forEach { c += it.correct; t += it.total }
+    return if (t <= 0) "—" else "${c * 100 / t}%"
 }
