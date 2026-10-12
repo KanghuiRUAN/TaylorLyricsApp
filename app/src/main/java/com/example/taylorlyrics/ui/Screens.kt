@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -152,14 +151,13 @@ private fun wholeWordRanges(body: String, term: String): List<IntRange> {
 // ======================= 主页 =======================
 
 /**
- * 主页：搜索（整词 / 短语两种模式，带命中高亮）+ 随机惊喜 + 收藏 + 词网络入口 + 专辑列表（带封面）
+ * 主页：搜索（整词 / 短语两种模式，带命中高亮）+ 随机惊喜 + 收藏 + 专辑列表（带封面）
  */
 @Composable
 fun HomeScreen(
     repository: LyricsRepository,
     onOpenAlbum: (String) -> Unit,
     onOpenTrack: (Track, String) -> Unit,
-    onOpenWordNet: (String?) -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenGuess: () -> Unit,
     onSurprise: () -> Unit,
@@ -191,7 +189,6 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                HeaderChip(Icons.Default.AccountTree, "词网络", onClick = { onOpenWordNet(null) })
                 HeaderChip(Icons.Default.Style, "随便来一首", onClick = onSurprise)
                 HeaderChip(Icons.Default.StarBorder, "我的收藏", onClick = onOpenFavorites)
                 HeaderChip(Icons.Default.SmartToy, "猜歌词", onClick = onOpenGuess)
@@ -312,6 +309,10 @@ private fun HitRow(hit: Hit, query: String, onClick: () -> Unit) {
                 Spacer(Modifier.height(1.dp))
                 Text(t.album, color = Soft, fontSize = 12.sp, maxLines = 1)
             }
+            if (t.streams > 0L) {
+                Spacer(Modifier.width(8.dp))
+                Text("🔥${formatStreams(t.streams)}", color = Teal, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            }
             Spacer(Modifier.width(8.dp))
             Text(formatDuration(t.durationSec), color = Soft, fontSize = 12.sp)
         }
@@ -357,6 +358,11 @@ private fun AlbumRow(album: AlbumInfo, onClick: () -> Unit) {
                 Spacer(Modifier.height(2.dp))
                 Text("${album.tracks.size} 首 · ${album.release.take(4)} 年",
                     color = Soft, fontSize = 12.sp)
+                val hot = album.tracks.maxOfOrNull { it.streams } ?: 0L
+                if (hot > 0L) {
+                    Spacer(Modifier.height(1.dp))
+                    Text("最热 🔥${formatStreams(hot)}", color = Teal, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
             }
         }
     }
@@ -383,6 +389,10 @@ private fun TrackRow(
         }
         if (onToggleFav != null) {
             FavStar(isFav = isFav, onToggle = onToggleFav)
+            Spacer(Modifier.width(6.dp))
+        }
+        if (track.streams > 0L) {
+            Text("🔥${formatStreams(track.streams)}", color = Teal, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.width(6.dp))
         }
         Text(formatDuration(track.durationSec), color = Soft, fontSize = 12.sp)
@@ -477,7 +487,6 @@ fun LyricsScreen(
     initialTerm: String,
     onBack: () -> Unit,
     onToggleFav: () -> Unit,
-    onOpenWord: (String) -> Unit,
 ) {
     val ctx = LocalContext.current
     val clip = LocalClipboardManager.current
@@ -644,6 +653,43 @@ fun LyricsScreen(
             MiniButton("分享歌词") { shareText("${track.track} - ${track.album}\n\n$body") }
         }
 
+        // 热度 & 场景标签（v1.4）
+        if (track.streams > 0L || track.tags.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (track.streams > 0L) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Teal.copy(alpha = 0.10f),
+                    ) {
+                        Text(
+                            "🔥 " + formatStreams(track.streams),
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            fontSize = 12.sp, color = Teal, fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                if (track.tags.isNotEmpty()) {
+                    Spacer(Modifier.width(6.dp))
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        track.tags.forEach { tag ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = accent.copy(alpha = 0.12f),
+                            ) {
+                                Text(
+                                    "#$tag",
+                                    Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    fontSize = 11.sp, color = accent, fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 段落跳转：数据源没有 [Bridge] 标记，按空行分段；Bridge / Outro 通常是靠后的段
         if (sections.size > 1) {
             Row(
@@ -692,50 +738,6 @@ fun LyricsScreen(
                         fontSize = 15.sp,
                         lineHeight = 26.sp,
                         fontFamily = FontFamily.SansSerif,
-                    )
-                }
-            }
-        }
-
-        // 本首歌的词网络
-        WordStrip(repository = repository, track = track, accent = accent, onOpenWord = onOpenWord)
-    }
-}
-
-@Composable
-private fun WordStrip(repository: LyricsRepository, track: Track, accent: Color, onOpenWord: (String) -> Unit) {
-    val words by produceState(initialValue = emptyList<WordNode>(), repository, track) {
-        value = withContext(Dispatchers.Default) {
-            // 单字不进网络：只保留 >=4 字母的词
-            repository.topWordsIn(track, 60).filter { it.word.length >= 4 }.take(18)
-        }
-    }
-    if (words.isEmpty()) return
-    Column(
-        Modifier.fillMaxWidth().background(Color.White)
-            .navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.AccountTree, null, tint = accent, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("这首歌的高频词 · 点击查看词网络", color = Soft, fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(6.dp))
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            words.forEach { w ->
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = accent.copy(alpha = 0.10f),
-                    modifier = Modifier.clickable { onOpenWord(w.word) },
-                ) {
-                    Text(
-                        "${w.word} · ${w.total}",
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        fontSize = 12.sp, color = accent, fontWeight = FontWeight.Medium,
                     )
                 }
             }
@@ -939,206 +941,6 @@ fun GuessScreen(
                             Text("打开这首歌词复习", color = Soft, fontSize = 12.sp)
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-// ======================= 词网络 =======================
-
-/**
- * 词网络页：
- *  · 无中心词时展示全库高频枢纽词（字号随覆盖歌曲数变化；单字不进网络）
- *  · 有中心词时展示它的关联词（共现边）+ 歌词包含该词的歌曲（带高亮摘要）
- */
-@Composable
-fun WordNetScreen(
-    repository: LyricsRepository,
-    centerWord: String?,
-    onBack: () -> Unit,
-    onPickWord: (String) -> Unit,
-    onOpenTrack: (Track, String) -> Unit,
-) {
-    val hubs by produceState(initialValue = emptyList<WordNode>(), repository) {
-        value = withContext(Dispatchers.Default) { repository.topWords(60) }
-    }
-    val related by produceState(initialValue = emptyList<WordNode>(), centerWord, repository) {
-        value = if (centerWord.isNullOrBlank()) emptyList()
-        else withContext(Dispatchers.Default) { repository.relatedWords(centerWord, 40) }
-    }
-    val songs by produceState(initialValue = emptyList<Hit>(), centerWord, repository) {
-        value = if (centerWord.isNullOrBlank()) emptyList()
-        else withContext(Dispatchers.Default) { repository.songsContaining(centerWord, 120) }
-    }
-
-    Column(Modifier.fillMaxSize().background(Bg)) {
-        Row(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    centerWord?.let { "词网络 · $it" } ?: "词网络",
-                    color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 1
-                )
-                Text(
-                    centerWord?.let {
-                        "关联词 ${related.size} 个 · 歌词命中 ${songs.size} 首" +
-                            if (songs.size >= 120) "（已截断）" else ""
-                    } ?: "基于 ${repository.trackCount} 首歌词的共现关系 · 单字不进网络",
-                    color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, maxLines = 1
-                )
-            }
-        }
-
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = WindowInsets.navigationBars.asPaddingValues().let {
-                PaddingValues(top = it.calculateTopPadding(), bottom = it.calculateBottomPadding() + 12.dp)
-            }
-        ) {
-            item {
-                Card(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("高频枢纽词", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(2.dp))
-                        Text("数字 = 出现在多少首歌里；字号越大越常出现。单字不进网络。点击任意词查看它的关联词与歌曲。",
-                            color = Soft, fontSize = 12.sp, lineHeight = 17.sp)
-                        Spacer(Modifier.height(10.dp))
-                        if (hubs.isEmpty()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Teal)
-                                Spacer(Modifier.width(10.dp))
-                                Text("正在建立词索引…", color = Soft, fontSize = 13.sp)
-                            }
-                        } else {
-                            WordCloud(hubs, centerWord, onPickWord)
-                        }
-                    }
-                }
-            }
-
-            if (!centerWord.isNullOrBlank()) {
-                item {
-                    SectionTitle("「$centerWord」的关联词（同一首歌里最常一起出现）")
-                }
-                item {
-                    Card(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                            .heightIn(max = 240.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                    ) {
-                        if (related.isEmpty()) {
-                            Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Teal)
-                            }
-                        } else {
-                            Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
-                                related.chunked(3).forEach { row ->
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        row.forEach { w ->
-                                            Surface(
-                                                modifier = Modifier.weight(1f).clickable { onPickWord(w.word) },
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (w.word == centerWord) Teal.copy(alpha = 0.18f)
-                                                else Color(0xFFF1F3F5),
-                                            ) {
-                                                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                                                    Text(w.word, fontSize = 13.sp, color = Ink,
-                                                        fontWeight = FontWeight.Medium, maxLines = 1)
-                                                    Text("共现 ${w.songs} 首", fontSize = 10.sp, color = Soft)
-                                                }
-                                            }
-                                        }
-                                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                                    }
-                                    Spacer(Modifier.height(6.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                item { SectionTitle("歌词包含「$centerWord」的歌曲（关键词已高亮）") }
-                items(songs) { hit ->
-                    HitRow(hit = hit, query = centerWord, onClick = { onOpenTrack(hit.track, centerWord) })
-                    HorizontalDivider(color = Color(0x10000000))
-                }
-                if (songs.isEmpty() && related.isNotEmpty()) {
-                    item {
-                        Text("该词只出现在少量歌词中，或为变体拼写。",
-                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                            color = Soft, fontSize = 12.sp)
-                    }
-                }
-            } else {
-                item {
-                    Text(
-                        "提示：以上面的枢纽词为起点，逐词跳转即可在整张词网里游走。",
-                        Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
-                        color = Soft, fontSize = 12.sp, lineHeight = 18.sp
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
-        color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold
-    )
-}
-
-/** 词云：字号按 log(覆盖歌曲数) 缩放 */
-@Composable
-private fun WordCloud(
-    nodes: List<WordNode>,
-    selected: String?,
-    onPick: (String) -> Unit,
-) {
-    val maxSongs = (nodes.maxOfOrNull { it.songs } ?: 1).coerceAtLeast(2)
-    val maxLog = ln(maxSongs.toFloat() + 1f)
-    FlowRow(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
-    ) {
-        nodes.forEach { n ->
-            val ratio = (ln((n.songs + 1).toFloat()) / maxLog).coerceIn(0f, 1f)
-            val size = 12f + 12f * ratio
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (n.word == selected) Teal else Teal.copy(alpha = 0.06f + 0.16f * ratio),
-                modifier = Modifier.clickable { onPick(n.word) },
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        n.word,
-                        fontSize = size.sp,
-                        color = if (n.word == selected) Color.White else Ink,
-                        fontWeight = if (ratio > 0.6f) FontWeight.Bold else FontWeight.Normal,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        "${n.songs}",
-                        fontSize = 10.sp,
-                        color = if (n.word == selected) Color.White.copy(alpha = 0.85f) else Soft,
-                    )
                 }
             }
         }
