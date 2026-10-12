@@ -102,7 +102,7 @@ object AlbumPalette {
         "Cardigan (Cabin In Candlelight Version)" to 0xFF7D8A80,
     )
 
-    private val DEFAULT_TINT = 0xFF1DB0A6
+    private val DEFAULT_TINT: Int = 0xFF1DB0A6.toInt()
 
     fun artKey(album: String): String? = ART[album]
 
