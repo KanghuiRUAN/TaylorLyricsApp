@@ -3,6 +3,7 @@ package com.example.taylorlyrics.data
 import android.content.Context
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import kotlin.random.Random
 
 /** 专辑信息 */
 data class AlbumInfo(
@@ -186,6 +187,51 @@ class LyricsRepository private constructor(private val allTracks: List<Track>) {
 
     fun findTrack(album: String, trackNum: Int, disc: Int): Track? =
         allTracks.firstOrNull { it.album == album && it.disc == disc && it.trackNum == trackNum }
+
+    // ---------------- v1.3 粉丝功能 ----------------
+
+    /** 随机惊喜：随便来一首 */
+    fun randomTrack(): Track = allTracks[Random.nextInt(allTracks.size)]
+
+    /** 随机抽取 n 首不同的歌（猜歌词出题用） */
+    fun sampleTracks(n: Int): List<Track> = allTracks.shuffled().take(n)
+
+    /** 收藏 key -> 曲目（Favorites 存的是字符串 key，返回时反查实体） */
+    fun tracksByKeys(keys: List<String>): List<Track> =
+        keys.mapNotNull { k ->
+            val p = k.split('\u0001')
+            if (p.size == 4) findTrack(p[0], p[2].toIntOrNull() ?: -1, p[1].toIntOrNull() ?: -1)
+            else null
+        }
+
+    /**
+     * 短语级搜索：在歌词正文里按词序逐词连续匹配输入短语（标点和空格不影响），
+     * 例如搜 "love story" 能命中 "love story, baby, just say, yes"。
+     */
+    fun searchPhrase(query: String, limit: Int = 100): List<Hit> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val nq = normalize(q)
+        // 逐歌独立查找：bodyIndex 是拼接大文本，直接在里面找短语会跨歌误命中
+        val out = ArrayList<Hit>(16)
+        for (t in allTracks) {
+            if (out.size >= limit) break
+            val rg = normRanges(normOf(t.plainLyrics), nq)
+            if (rg.isEmpty()) continue
+            out.add(Hit(t, normalize(t.track).contains(nq), rg.take(120), snippetOf(t.plainLyrics, rg)))
+        }
+        return out
+    }
+
+
+    /** 整张专辑收藏/取消：把该专辑全部曲目一起加入或移出收藏，返回切换后是否已收藏 */
+    fun toggleAlbumFav(c: Context, albumName: String): Boolean {
+        val ts = albumTracks(albumName)
+        if (ts.isEmpty()) return false
+        val target = !Favorites.isFav(c, ts[0])
+        for (t in ts) if (Favorites.isFav(c, t) != target) Favorites.toggle(c, t)
+        return target
+    }
 
     // ---------------- 词网络 ----------------
 

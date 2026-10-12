@@ -76,3 +76,42 @@ private fun parseTimestamp(ts: String): Int? {
     }
     return ((min * 60) + sec) * 1000 + frac
 }
+
+// ======================= 歌词分段（v1.3） =======================
+
+/** 歌词的一个段落：数据源没有 [Bridge]/[Verse] 标记，按空行划分 */
+data class Section(
+    val index: Int,      // 段序号（从 0 开始）
+    val title: String,   // "第 N 段"
+    val firstLine: Int,  // 起始行在 lines 里的下标
+    val lineCount: Int,  // 段内非空行数
+    val preview: String, // 首行截断预览
+)
+
+/** 按空行把歌词行切成分段；返回按出现顺序排列（Bridge 等靠后的段在列表尾部） */
+fun splitSections(lines: List<LineText>): List<Section> {
+    if (lines.isEmpty()) return emptyList()
+    val out = ArrayList<Section>(12)
+    var start = -1
+    var count = 0
+
+    fun flush() {
+        if (start < 0) return
+        val first = lines[start].text.trim()
+        val preview = if (first.length > 22) first.take(22) + "…" else first
+        out.add(Section(out.size, "第 ${out.size + 1} 段", start, count, preview))
+        start = -1
+        count = 0
+    }
+
+    for (i in lines.indices) {
+        if (lines[i].text.isBlank()) {
+            if (start >= 0) flush()
+        } else {
+            if (start < 0) start = i
+            count++
+        }
+    }
+    flush()
+    return out
+}
