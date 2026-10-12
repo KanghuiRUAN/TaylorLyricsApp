@@ -11,6 +11,10 @@ data class Track(
     val hasSyncedLyrics: Boolean,
     val plainLyrics: String,
     val syncedLyrics: String,
+    /** Spotify 总流媒体播放量（kworb 数据）；无数据为 0 */
+    val streams: Long = 0L,
+    /** 场景标签（如"深夜""心碎"等，中文）；无数据为空 */
+    val tags: List<String> = emptyList(),
 )
 
 /** 同步歌词的一行：时间(毫秒) + 文本 */
@@ -26,6 +30,30 @@ fun formatDuration(sec: Int): String {
     val m = sec / 60
     val s = sec % 60
     return "%d:%02d".format(m, s)
+}
+
+/**
+ * 把 Spotify 总播放量格式化为可读字符串。
+ * 例：3,508,616,612 -> "3.5B"；486,630,446 -> "486.6M"；172,615,884 -> "172.6M"；999 -> "999"
+ * @return 无数据（<=0）时返回空字符串
+ */
+fun formatStreams(v: Long): String {
+    if (v <= 0L) return ""
+    return when {
+        v >= 1_000_000_000L -> {
+            val b = v.toDouble() / 1_000_000_000.0
+            "%.1fB".format(b)
+        }
+        v >= 1_000_000L -> {
+            val m = v.toDouble() / 1_000_000.0
+            "%.1fM".format(m)
+        }
+        v >= 1_000L -> {
+            val k = v.toDouble() / 1_000.0
+            "%.1fK".format(k)
+        }
+        else -> v.toString()
+    }
 }
 
 /**
