@@ -2,6 +2,7 @@ package com.example.taylorlyrics.data
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.LruCache
 
 /**
@@ -106,7 +107,7 @@ object AlbumPalette {
     fun artKey(album: String): String? = ART[album]
 
     /** 专辑时代色；未收录的专辑回退到应用主题色 */
-    fun tintOf(album: String): Int = TINT[album]?.toInt() ?: DEFAULT_TINT
+    fun tintOf(album: String): Int = TINT[album]?.let { it.toInt() } ?: DEFAULT_TINT
 
     // ---- 封面解码（带内存缓存，列表滚动时避免重复解码） ----
 
