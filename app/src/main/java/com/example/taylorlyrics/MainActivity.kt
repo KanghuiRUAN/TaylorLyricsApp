@@ -23,7 +23,6 @@ import com.example.taylorlyrics.ui.FavoritesScreen
 import com.example.taylorlyrics.ui.GuessScreen
 import com.example.taylorlyrics.ui.HomeScreen
 import com.example.taylorlyrics.ui.LyricsScreen
-import com.example.taylorlyrics.ui.WordNetScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +42,6 @@ private sealed class Screen {
     object Guess : Screen()
     data class Album(val name: String) : Screen()
     data class Lyrics(val track: Track, val keyword: String) : Screen()
-    data class WordNet(val centerWord: String?) : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,12 +55,6 @@ fun LyricsApp() {
 
     fun navigate(s: Screen) {
         backStack = backStack + s
-        currentScreen = s
-    }
-
-    /** 替换当前页而不加深栈：词网络里连续点词不会让返回键越按越深 */
-    fun replace(s: Screen) {
-        backStack = backStack.dropLast(1) + s
         currentScreen = s
     }
 
@@ -81,7 +73,6 @@ fun LyricsApp() {
             repository = repository,
             onOpenAlbum = { navigate(Screen.Album(it)) },
             onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
-            onOpenWordNet = { w -> navigate(Screen.WordNet(w)) },
             onOpenFavorites = { navigate(Screen.Favorites) },
             onOpenGuess = { navigate(Screen.Guess) },
             onSurprise = { navigate(Screen.Lyrics(repository.randomTrack(), "")) },
@@ -119,15 +110,6 @@ fun LyricsApp() {
                     Toast.LENGTH_SHORT
                 ).show()
             },
-            onOpenWord = { w -> navigate(Screen.WordNet(w)) },
-        )
-
-        is Screen.WordNet -> WordNetScreen(
-            repository = repository,
-            centerWord = s.centerWord,
-            onBack = { back() },
-            onPickWord = { w -> replace(Screen.WordNet(w)) },
-            onOpenTrack = { t, q -> navigate(Screen.Lyrics(t, q)) },
         )
     }
 }
