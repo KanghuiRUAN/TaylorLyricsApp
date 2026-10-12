@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Style
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -193,7 +194,7 @@ fun HomeScreen(
                 HeaderChip(Icons.Default.AccountTree, "词网络", onClick = { onOpenWordNet(null) })
                 HeaderChip(Icons.Default.Style, "随便来一首", onClick = onSurprise)
                 HeaderChip(Icons.Default.StarBorder, "我的收藏", onClick = onOpenFavorites)
-                HeaderChip(Icons.Default.Quiz, "猜歌词", onClick = onOpenGuess)
+                HeaderChip(Icons.Default.SmartToy, "猜歌词", onClick = onOpenGuess)
             }
         }
 
